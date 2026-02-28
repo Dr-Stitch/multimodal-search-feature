@@ -2,12 +2,13 @@
 
 ## Overview
 
-Build a new Jupyter Notebook agent (`product-search-agent/`) that lets users search a product catalog by providing a query image + text description. The system uses GPT-4o vision to describe images and `text-embedding-3-small` to embed combined text, stored and searched via Qdrant in-memory vector DB.
+Build a new Jupyter Notebook agent (`product-search-agent/`) that lets users search a product catalog by providing a query image, text description, or both. The system uses `google/siglip-base-patch16-224` (CLIP-based, local, free) to encode both images and text directly into the same 768-dim vector space — no paid APIs needed at all. Vectors are stored and searched via Qdrant in-memory vector DB.
 
 ## Tech Stack
 
-- **Embedding:** OpenAI `text-embedding-3-small` (1536-dim vectors)
-- **Vision:** OpenAI `gpt-4o` (image → rich text description)
+- **CLIP Encoder:** `google/siglip-base-patch16-224` via HuggingFace `transformers` (local, free)
+    - Encodes both images AND text into the same 768-dim vector space
+    - Replaces both the vision model and the embedding model entirely
 - **Vector DB:** Qdrant in-memory (`QdrantClient(":memory:")`), no Docker required
 - **Delivery:** Jupyter Notebook, consistent with existing agent patterns
 
@@ -41,24 +42,24 @@ AI-Agents/
 ## Required Packages
 
 ```
-openai  qdrant-client  python-dotenv  pandas  Pillow
+transformers  torch  torchvision  qdrant-client  python-dotenv  pandas  Pillow
 ```
+
+> `torch` + `transformers` load SigLIP locally. Everything runs fully offline — no API keys needed.
 
 ## .env Variables
 
-```
-OPENAI_API_KEY=sk-...
-```
+None required for the current implementation. `.env` file and `python-dotenv` are kept in the setup so credentials can be added later (e.g. for future Gemini query expansion) without restructuring.
 
 ## Notebook Structure (Cell-by-Cell)
 
 ### Section 1 — Setup
 
 - **Cell 0 (Markdown):** Title + workflow overview
-- **Cell 1 (Code):** `# install openai qdrant-client python-dotenv pandas Pillow` + `!pip install ...`
+- **Cell 1 (Code):** `# install transformers torch torchvision qdrant-client python-dotenv pandas Pillow` + `!pip install ...`
 - **Cell 2 (Code):** All imports
-- **Cell 3 (Code):** `load_dotenv()`, load `OPENAI_API_KEY`, raise `ValueError` if missing
-- **Cell 4 (Code):** Config constants (`EMBEDDING_MODEL`, `VECTOR_DIM=1536`, `VISION_MODEL`, `COLLECTION_NAME`, `TOP_K=5`, `DATA_CSV_PATH`, `RATE_LIMIT_DELAY=0.5`)
+- **Cell 3 (Code):** `load_dotenv()` — no required keys for now; placeholder for future credentials
+- **Cell 4 (Code):** Config constants (`CLIP_MODEL_NAME="google/siglip-base-patch16-224"`, `VECTOR_DIM=768`, `COLLECTION_NAME`, `TOP_K=5`, `DATA_CSV_PATH`)
 
 ### Section 2 — Class Definitions (one per cell)
 
@@ -69,21 +70,15 @@ OPENAI_API_KEY=sk-...
 - Drops rows with missing required fields (with warning)
 - Returns `list[dict]`
 
-**Cell 6 — `VisionDescriptionAgent`**
+**Cell 6 — `CLIPEncoderAgent`**
 
-- Accepts image file path → base64-encodes it → calls GPT-4o vision API
-- Validates image exists and is readable with Pillow before sending
-- System prompt instructs GPT-4o to describe colors, materials, shape, style, use case
-- Uses `"detail": "low"` (cheaper, suitable for product thumbnails)
-- Returns descriptive text string
+- Loads `google/siglip-base-patch16-224` processor and model on construction (cached after first load)
+- `encode_image(image_path)` → validates file exists + Pillow-readable → returns 768-dim numpy vector
+- `encode_text(text)` → raises `ValueError` on empty string → returns 768-dim numpy vector
+- Both methods L2-normalize the output vector before returning (required for correct cosine similarity in Qdrant)
+- Supports `.jpg`, `.png`, `.webp`, `.gif`
 
-**Cell 7 — `EmbeddingAgent`**
-
-- Calls `text-embedding-3-small` API on any text string
-- `combine_descriptions(vision_desc, text_desc)` merges both with `"Visual: ... | Description: ..."` format
-- Raises `ValueError` on empty input before any API call
-
-**Cell 8 — `VectorStoreAgent`**
+**Cell 7 — `VectorStoreAgent`**
 
 - Initializes `QdrantClient(":memory:")` on construction
 - Creates collection with `COSINE` distance, configurable vector dim
@@ -91,17 +86,17 @@ OPENAI_API_KEY=sk-...
 - `search(query_vector, top_k)` — returns `list[ScoredPoint]`
 - `count()` — returns number of indexed points
 
-**Cell 9 — `ProductSearchAgent`**
+**Cell 8 — `ProductSearchAgent`**
 
 - Orchestrates the full query pipeline:
-    1. Describe query image with `VisionDescriptionAgent` (if image provided)
-    2. Combine with query text via `EmbeddingAgent.combine_descriptions`
-    3. Embed with `EmbeddingAgent.embed`
+    1. If image provided → `CLIPEncoderAgent.encode_image` → image vector
+    2. If text provided → `CLIPEncoderAgent.encode_text` → text vector
+    3. If both provided → average the two vectors, re-normalize → combined query vector
     4. Search via `VectorStoreAgent.search`
 - Supports image-only, text-only, or image+text queries
 - Returns `list[dict]` with rank, score, and all product metadata
 
-**Cell 10 — `ResponseAgent`**
+**Cell 9 — `ResponseAgent`**
 
 - `format_results(results, query_text)` → formatted string
 - `display(results, query_text)` → prints to stdout
@@ -109,25 +104,29 @@ OPENAI_API_KEY=sk-...
 
 ### Section 3 — Initialization
 
-**Cell 11:** Instantiate all agents, print confirmation
+**Cell 10:** Instantiate all agents, print confirmation
 
 ### Section 4 — Ingest Phase
 
-**Cell 12 (Markdown):** Ingest phase description + cost warning (one GPT-4o + one embedding call per product)
+**Cell 11 (Markdown):** Ingest phase description — entirely free and local, no API calls
 
-**Cell 13 (Code):** Ingest loop
+**Cell 12 (Code):** Ingest loop
 
-- For each product: vision describe → combine → embed → upsert
-- Per-product `try/except`: vision failure falls back to text-only; embedding failure skips product
-- `time.sleep(RATE_LIMIT_DELAY)` between calls
+- For each product:
+    1. `CLIPEncoderAgent.encode_image(product["image_path"])` → image vector
+    2. `CLIPEncoderAgent.encode_text(product["text_description"])` → text vector
+    3. Average both vectors, re-normalize → combined product vector
+    4. `VectorStoreAgent.upsert(point_id, combined_vector, payload)`
+- Per-product `try/except`: image encode failure falls back to text-only vector; text encode failure falls back to image-only vector; both fail → product skipped, added to `failed_products`
+- No `time.sleep` needed (all local, no rate limits)
 - Prints progress `(idx/total)` per product
 - Reports `failed_products` list at end
 
 ### Section 5 — Query Phase
 
-**Cell 14 (Markdown):** Query phase description
+**Cell 13 (Markdown):** Query phase description
 
-**Cell 15:** Example query with image + text
+**Cell 14:** Example query with image + text
 
 ```python
 QUERY_IMAGE_PATH = "data/images/query_sample.jpg"
@@ -136,66 +135,72 @@ results = search_agent.search(QUERY_IMAGE_PATH, QUERY_TEXT)
 response_agent.display(results, QUERY_TEXT)
 ```
 
-**Cell 16:** Text-only query example (`query_image_path=None`)
+**Cell 15:** Text-only query example (`query_image_path=None`)
 
 ### Section 6 — Verification
 
-**Cell 17 (Markdown):** Verification section header
+**Cell 16 (Markdown):** Verification section header
 
-**Cell 18:** Assert `vector_store.count()` == products loaded - failed count
+**Cell 17:** Assert `vector_store.count()` == products loaded - failed count
 
-**Cell 19:** Retrieve point `id=0`, print payload keys + vector length
+**Cell 18:** Retrieve point `id=0`, print payload keys + vector length
 
-**Cell 20:** Self-consistency test — search product[0] with its own image + description, verify it ranks #1
+**Cell 19:** Self-consistency test — search product[0] with its own image + description, verify it ranks #1
 
 ## Architecture Data Flow
 
 ```
+INGEST TIME (fully local, no API calls)
+─────────────────────────────────────────────────────
 [products.csv + images/]
         │
-DataIngestionAgent          validates + yields product dicts
+DataIngestionAgent              validates + yields product dicts
         │
-VisionDescriptionAgent      GPT-4o: image → rich text
-        │
-EmbeddingAgent.combine      merges vision text + human text
-        │
-EmbeddingAgent.embed        → 1536-dim vector
-        │
-VectorStoreAgent.upsert     stores vector + payload in Qdrant
+        ├─ CLIPEncoderAgent.encode_image(image_path)   → 768-dim image vector
+        ├─ CLIPEncoderAgent.encode_text(text_desc)     → 768-dim text vector
+        └─ average + L2-normalize                      → 768-dim combined vector
+                │
+VectorStoreAgent.upsert         stores vector + payload in Qdrant
 
-─── QUERY TIME ──────────────────────────────────────
-[query image + text]
-        │
-ProductSearchAgent.search
-  ├─ VisionDescriptionAgent.describe  (query image → text)
-  ├─ EmbeddingAgent.combine_descriptions
-  ├─ EmbeddingAgent.embed             (→ query vector)
-  └─ VectorStoreAgent.search          (cosine top-K)
-        │
-ResponseAgent.display       formatted ranked output
+
+QUERY TIME
+─────────────────────────────────────────────────────
+[query image]  ──► CLIPEncoderAgent.encode_image  ──► image vector
+                                                          │
+[query text]   ──► CLIPEncoderAgent.encode_text   ──► text vector
+                                                          │
+                        average + L2-normalize    ──► query vector
+                                                          │
+                   VectorStoreAgent.search         cosine top-K
+                                                          │
+ResponseAgent.display           formatted ranked output
 ```
 
 ## Error Handling
 
-| Scenario                     | Where                    | Handling                                                         |
-| ---------------------------- | ------------------------ | ---------------------------------------------------------------- |
-| Missing `.env` / API key     | Cell 3                   | `ValueError` with setup instructions                             |
-| CSV not found                | `DataIngestionAgent`     | `FileNotFoundError`                                              |
-| CSV missing required columns | `DataIngestionAgent`     | `ValueError` listing missing columns                             |
-| Image file not found         | `VisionDescriptionAgent` | `FileNotFoundError`; ingest loop catches, skips with warning     |
-| Corrupt image                | `VisionDescriptionAgent` | Pillow `verify()` raises; caught in ingest loop                  |
-| Unsupported image format     | `VisionDescriptionAgent` | `ValueError` listing supported formats (.jpg, .png, .webp, .gif) |
-| GPT-4o API failure           | Ingest loop              | Falls back to text-only embedding (vision_desc = "")             |
-| Embedding API failure        | Ingest loop              | Product skipped, added to `failed_products`                      |
-| Empty text to embed          | `EmbeddingAgent`         | `ValueError` before API call                                     |
-| Empty search query           | `ProductSearchAgent`     | `ValueError` before any API calls                                |
+| Scenario                      | Where                | Handling                                                              |
+| ----------------------------- | -------------------- | --------------------------------------------------------------------- |
+| CSV not found                 | `DataIngestionAgent` | `FileNotFoundError`                                                   |
+| CSV missing required columns  | `DataIngestionAgent` | `ValueError` listing missing columns                                  |
+| Image file not found          | `CLIPEncoderAgent`   | `FileNotFoundError`; ingest loop catches, falls back to text-only     |
+| Corrupt image                 | `CLIPEncoderAgent`   | Pillow `verify()` raises; ingest loop falls back to text-only         |
+| Unsupported image format      | `CLIPEncoderAgent`   | `ValueError` listing supported formats (.jpg, .png, .webp, .gif)      |
+| Image encode failure (ingest) | Ingest loop          | Falls back to text-only vector                                        |
+| Text encode failure (ingest)  | Ingest loop          | Falls back to image-only vector; both fail → skip + `failed_products` |
+| Empty text to encode          | `CLIPEncoderAgent`   | `ValueError` before model call                                        |
+| Empty search query            | `ProductSearchAgent` | `ValueError` before any encoding                                      |
 
 ## Key Notes
 
-- **Qdrant is in-memory only** — re-run ingest after every kernel restart. For persistence, change `":memory:"` to `QdrantClient(path="./qdrant_data")` (noted as comment in Cell 11)
-- **Switching to `text-embedding-3-large`**: change both `EMBEDDING_MODEL` and `VECTOR_DIM=3072` in Cell 4 only
-- **`"detail": "low"`** on GPT-4o vision — faster and cheaper; change to `"high"` if product images contain fine text or logos
-- **Rate limiting** — `RATE_LIMIT_DELAY=0.5s` suits OpenAI Tier 1; reduce to `0.1s` for Tier 3+
+- **Qdrant is in-memory only** — re-run ingest after every kernel restart. For persistence, change `":memory:"` to `QdrantClient(path="./qdrant_data")` (noted as comment in Cell 10)
+- **SigLIP model is downloaded once** and cached by HuggingFace in `~/.cache/huggingface/` (~400 MB). Subsequent runs load from cache instantly
+- **No rate limiting needed** — all encoding is local
+- **Upgrading to a heavier CLIP model**: swap `CLIP_MODEL_NAME` to `laion/CLIP-ViT-H-14-laion2B` and set `VECTOR_DIM=1024` in Cell 4; requires GPU for reasonable speed
+- **Vector averaging for image+text queries** — averaging the image and text vectors then re-normalizing is the standard CLIP fusion approach; gives balanced image+text relevance
+
+## Future Enhancements
+
+- **Vague query enrichment** — add a `QueryExpansionAgent` that calls Gemini (free tier) when the user's text query is short or vague. It would expand e.g. `"camping stuff"` into a detailed description before SigLIP encodes it. Requires adding `google-generativeai` package and `GEMINI_API_KEY` to `.env`. The `ProductSearchAgent.search()` signature does not need to change — expansion would be an internal step before `CLIPEncoderAgent.encode_text`.
 
 ## Critical Reference Files
 

@@ -1,0 +1,75 @@
+
+Plan Summary
+This project builds a Multimodal Product Search Agent as a Jupyter Notebook. Users can search a product catalog by providing an image, text, or both. Here's how it works end-to-end:
+
+The 6 Phases
+Phase 1 — Setup
+Install packages, import libraries, load your OPENAI_API_KEY from .env, and define config constants (model names, vector dimensions, file paths, rate limits).
+
+Phase 2 — Class Definitions (the 5 agents)
+Each agent is its own cell:
+
+Agent	Role
+DataIngestionAgent	Reads & validates products.csv, fills defaults, returns list of product dicts
+VisionDescriptionAgent	Takes an image path → base64 encodes it → sends to GPT-4o → returns a rich text description
+EmbeddingAgent	Combines vision text + human text into one string, then embeds it into a 1536-dim vector
+VectorStoreAgent	Manages an in-memory Qdrant database — upsert, search, count
+ProductSearchAgent	Orchestrates the full query pipeline (image → describe → combine → embed → search)
+ResponseAgent	Formats and prints ranked results
+Phase 3 — Initialization
+Instantiate all 5 agents and print a confirmation.
+
+Phase 4 — Ingest Phase
+Loop through every product in the CSV: describe the image with GPT-4o, combine descriptions, embed, and upsert into Qdrant. Has per-product error handling with fallback (vision failure → text-only embedding; embedding failure → skip product). Prints progress.
+
+Phase 5 — Query Phase
+Two example queries: one with image + text, one with text only. Results are printed ranked by cosine similarity score.
+
+Phase 6 — Verification
+Asserts the vector count matches products indexed, inspects a stored point, and runs a self-consistency test (a product should rank #1 when searched with its own image + description).
+
+Models Used in This Plan
+Vision Model — gpt-4o
+Converts product images into rich text descriptions (colors, materials, shape, style, use case). Used with "detail": "low" for speed/cost.
+
+Embedding Model — text-embedding-3-small
+Converts the combined text description into a 1536-dimensional vector for similarity search.
+
+Alternative Model Options
+Vision Models (replacing gpt-4o)
+Model	Provider	Notes
+gpt-4o-mini	OpenAI	Much cheaper, slightly less detailed descriptions
+gpt-4-turbo	OpenAI	Older, more expensive than 4o
+claude-3-5-sonnet	Anthropic	Excellent vision quality, competitive cost
+claude-3-haiku	Anthropic	Fast and cheap, good for thumbnails
+gemini-1.5-flash	Google	Very fast and cheap vision
+gemini-1.5-pro	Google	High quality, large context
+LLaVA (local)	Meta/Open Source	Free, runs locally via Ollama, no API cost
+Qwen-VL (local)	Alibaba/Open Source	Strong multilingual vision, runs locally
+Embedding Models (replacing text-embedding-3-small)
+Model	Provider	Dimensions	Notes
+text-embedding-3-small	OpenAI	1536	Current - cheap, good quality
+text-embedding-3-large	OpenAI	3072	Better accuracy, 2x cost (change VECTOR_DIM=3072)
+text-embedding-ada-002	OpenAI	1536	Older, worse quality, not recommended
+nomic-embed-text	Nomic/Local	768	Free, runs locally via Ollama
+mxbai-embed-large	MixedBread/Local	1024	Free, top open-source performer
+all-MiniLM-L6-v2	HuggingFace	384	Very fast, lightweight, free
+CLIP Models (Alternative Architecture)
+CLIP (Contrastive Language-Image Pretraining) is a fundamentally different approach from what this plan uses. Instead of GPT-4o describing the image as text first, CLIP embeds images and text directly into the same vector space — no vision-to-text step needed.
+
+Model	Provider	Dimensions	Notes
+openai/clip-vit-base-patch32	OpenAI/HuggingFace	512	Original CLIP, fast, free, runs locally
+openai/clip-vit-large-patch14	OpenAI/HuggingFace	768	Better quality, still free/local
+laion/CLIP-ViT-H-14-laion2B	LAION	1024	State-of-art open CLIP, very accurate
+google/siglip-base-patch16-224	Google	768	Google's improved CLIP variant, excellent product search
+nomic-ai/nomic-embed-vision	Nomic	768	Pairs with nomic-embed-text, same vector space
+Amazon Titan Multimodal	AWS Bedrock	1024	Managed, image+text in one API call
+CLIP vs. This Plan's Approach
+This Plan (GPT-4o + Embeddings)	CLIP-based
+Cost	~$0.01–0.05 per product (API calls)	Free (local) or very cheap
+Description quality	Very rich (GPT-4o narrates details)	No description — pure visual similarity
+Text query accuracy	High (understands nuanced descriptions)	Moderate (short text queries work better)
+Image query accuracy	High (describes then searches)	Very high (direct image-to-image)
+Inference speed	Slower (two API calls per product)	Very fast (one local forward pass)
+Offline capable	No	Yes
+Recommendation: Use CLIP (SigLIP or CLIP-ViT-L) if you want free/local inference and primarily image-based queries. Stick with the GPT-4o + embeddings plan if rich text descriptions and nuanced natural language queries matter most.

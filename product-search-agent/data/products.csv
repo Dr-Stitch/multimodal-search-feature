@@ -1,0 +1,6 @@
+product_id,image_path,name,text_description,category,price,brand
+SKU001,data/images/SKU001.jpg,Red Hiking Backpack,"Durable red hiking backpack with multiple compartments, padded shoulder straps, and water-resistant nylon fabric. 40L capacity, suitable for multi-day trails.",Backpacks,89.99,TrailMaster
+SKU002,data/images/SKU002.jpg,Blue Running Shoes,"Lightweight blue running shoes with breathable mesh upper, cushioned midsole, and rubber outsole. Ideal for daily training and road running.",Footwear,129.99,SprintFlex
+SKU003,data/images/SKU003.jpg,Black Leather Wallet,"Slim black genuine leather bifold wallet with RFID blocking, 6 card slots, 2 bill compartments, and a coin pocket.",Accessories,34.99,UrbanEdge
+SKU004,data/images/SKU004.jpg,Green Camping Tent,"2-person green camping tent with waterproof polyester fly, fiberglass poles, and mesh ventilation panels. Easy 5-minute setup.",Camping,159.99,WildNest
+SKU005,data/images/SKU005.jpg,White Ceramic Mug,"Minimalist white ceramic coffee mug with matte finish, 12oz capacity. Microwave and dishwasher safe.",Kitchen,14.99,CleanCraft
