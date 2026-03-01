@@ -2,15 +2,43 @@
 
 This manual explains how to use and integrate the modular product search feature into your website, including how users interact with it, how to handle text/image/both queries, and how results are returned.
 
+# Modular Product Search Agent — User & Integration Manual
+
+This manual explains how to use and integrate the modular product search system, including user experience, backend integration, API usage, and best practices for production deployment. The system is modular, with ingestion, search, and API logic separated for maintainability and scalability.
+
 ---
 
 ## 1. Overview
 
 The modular product search agent is designed for seamless integration into any web application. It enables users to search your product catalog using text, images, or both, and returns the most relevant products using advanced multimodal search.
 
+## 1. Overview
+
+The modular product search agent enables users to search your product catalog using text, images, or both, returning the most relevant products using advanced multimodal search (CLIP/SigLIP + Qdrant). The system is designed for easy integration into any web application, with robust error handling, logging, and environment-based configuration.
+
 ---
 
-## 2. User Experience
+
+## 2. Environment Setup
+
+1. **Install dependencies:**
+        ```bash
+        pip install -r requirements.txt
+        ```
+2. **Configure environment variables:**
+        - Create a `.env` file in the project root with:
+            ```env
+            QDRANT_URL=https://your-qdrant-url:6333
+            QDRANT_API_KEY=your_api_key_here
+            CLIP_MODEL_NAME=google/siglip-base-patch16-224
+            QDRANT_COLLECTION=product_catalog
+            DATA_CSV_PATH=../data/products.csv
+            ```
+        - Never hardcode secrets in code. Always use `.env` or environment variables.
+
+---
+
+## 3. User Experience
 
 ### How Users Search
 
@@ -38,6 +66,35 @@ The modular product search agent is designed for seamless integration into any w
 	"top_k": 5
 }
 ```
+
+### Option 1: FastAPI (Recommended)
+
+The project includes a ready-to-use FastAPI server (`search_api_fastapi.py`).
+
+**Start the API server:**
+```bash
+uvicorn search_api_fastapi:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**API Endpoint:**
+- `POST /search` — Accepts form fields:
+        - `query_text` (optional, string)
+        - `image` (optional, file upload)
+        - `top_k` (optional, int)
+
+**Example cURL:**
+```bash
+curl -X POST "http://localhost:8000/search" \
+    -F "query_text=red running shoes" \
+    -F "image=@/path/to/image.jpg" \
+    -F "top_k=5"
+```
+
+**Response:** JSON list of ranked product results (see Result Format below).
+
+---
+
+### Option 2: Python API (Direct Integration)
 
 1. Save the uploaded image (if any) to a temporary path.
 2. Pass the text and/or image path to `ProductSearchFeature.search()`.
@@ -69,6 +126,8 @@ def search():
     ]
     return jsonify({'results': formatted})
 ```
+
+#### Example (Flask-style pseudocode):
 
 ### Backend Integration Examples
 
@@ -174,12 +233,9 @@ app.listen(3000, () => console.log("Server running on port 3000"));
 
 ### Frontend
 
-- Provide a search form with:
     - Text input for queries
     - File upload for images
     - Optionally, both fields together
-- On submit, send the data to the backend `/search` endpoint.
-- Display the returned product list (name, image, description, etc.) to the user.
 
 #### Image Upload Technology & Recommendations
 
@@ -215,9 +271,6 @@ app.listen(3000, () => console.log("Server running on port 3000"));
 
 The backend returns a list of results, each with:
 
-- `rank`: Position in the result list
-- `score`: Similarity score (higher = more similar)
-- `product_id`, `name`, `text_description`, `image_path`, `category`, `price`, `brand` (from your catalog)
 
 Example response:
 
@@ -239,6 +292,26 @@ Example response:
   ]
 }
 ```
+
+---
+
+## 6. Deployment Notes
+
+---
+
+## 7. Advanced Tips
+
+---
+
+## 8. Deployment Notes
+
+---
+
+## 9. Advanced Tips
+
+---
+
+For further integration help, see the main README or contact the project maintainer.
 
 ---
 

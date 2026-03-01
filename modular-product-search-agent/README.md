@@ -1,6 +1,6 @@
-# Modular Product Search Agent Manual
+# Modular Product Search Agent
 
-This manual explains the structure and usage of the modular-product-search-agent directory, which separates the training (offline) and feature (online) phases for scalable, maintainable deployment.
+This project provides a scalable, production-ready multimodal product search system using CLIP (SigLIP) and Qdrant. The codebase is modular, separating offline ingestion from online search and API serving.
 
 ---
 
@@ -9,86 +9,86 @@ This manual explains the structure and usage of the modular-product-search-agent
 ```
 modular-product-search-agent/
 ├── train_and_ingest.py   # Offline: data ingestion, encoding, and vector DB population
-├── search_feature.py     # Online: search API for website integration
+├── search_feature.py     # Online: search logic for API integration
+├── search_api_fastapi.py # FastAPI server for production API
+├── USER_MANUAL.md        # Detailed integration and usage guide
+├── README.md             # This file
 ```
+
+---
+
+## Setup & Environment
+
+1. **Clone the repository and install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+2. **Configure environment variables:**
+    - Create a `.env` file in the project root with:
+      ```env
+      QDRANT_URL=https://your-qdrant-url:6333
+      QDRANT_API_KEY=your_api_key_here
+      CLIP_MODEL_NAME=google/siglip-base-patch16-224
+      QDRANT_COLLECTION=product_catalog
+      DATA_CSV_PATH=../data/products.csv
+      ```
+    - Never hardcode secrets in code. Always use `.env` or environment variables.
 
 ---
 
 ## 1. train_and_ingest.py
 
 **Purpose:**
-
-- Handles the offline phase: loads product data, encodes images/text, and populates the Qdrant vector database.
+- Loads product data, encodes images/text, and populates the Qdrant vector database.
 - Run this script whenever you want to (re)build your product search index.
 
-**Key Steps:**
-
-1. Load product data from CSV
-2. Encode images and text using CLIP (SigLIP)
-3. Store vectors and metadata in Qdrant (vector DB)
-
-**How to Use:**
-
-- Place your product CSV and images in the appropriate locations.
-- Adjust `DATA_CSV_PATH` and image paths as needed.
-- Run:
-    ```bash
-    python train_and_ingest.py
-    ```
-- The script will process all products and populate the Qdrant DB for later search.
+**Usage:**
+```bash
+python train_and_ingest.py
+```
 
 ---
 
 ## 2. search_feature.py
 
 **Purpose:**
-
-- Provides the online feature for your website: loads the trained Qdrant vector DB and runs search queries (image, text, or both).
-- Integrate this as a backend API or service for your web app.
-
-**Key Steps:**
-
-1. Load the trained Qdrant vector DB
-2. Encode user queries (image, text, or both)
-3. Search for similar products and return results
-
-**How to Use:**
-
-- Ensure the Qdrant DB is populated (run `train_and_ingest.py` first).
+- Loads the trained Qdrant vector DB and runs search queries (image, text, or both).
 - Integrate the `ProductSearchFeature` class into your backend (Flask, FastAPI, etc.).
-- Example usage (for testing):
-    ```bash
-    python search_feature.py
-    ```
-- For production, expose the `search` method as an API endpoint.
+
+**Usage:**
+```bash
+python search_feature.py
+```
+Or import and use in your API server.
 
 ---
 
-## 3. Customization & Extension
+## 3. search_api_fastapi.py
 
-- Both scripts are heavily commented for readability and easy modification.
-- You can switch to image URL support, add new metadata fields, or change the model as needed.
-- For large-scale deployments, consider:
-    - Running Qdrant as a persistent service
-    - Serving the CLIP model via a dedicated inference server
-    - Adding caching, batching, or async processing
+**Purpose:**
+- FastAPI-based API for multimodal product search.
+- Accepts text, image, or both as input and returns ranked product results.
 
----
-
-## 4. Troubleshooting
-
-- Ensure all dependencies are installed (see requirements in the main README or notebook).
-- Check file paths and permissions for images and CSVs.
-- Review script output for warnings about missing or failed data.
+**Usage:**
+```bash
+uvicorn search_api_fastapi:app --host 0.0.0.0 --port 8000 --reload
+```
+Then POST to `http://localhost:8000/search` with form fields `query_text`, `image`, and `top_k`.
 
 ---
 
-## 5. References
+## Security & Best Practices
+- Store all secrets (API keys, URLs) in `.env`.
+- Validate and sanitize all file uploads.
+- For production, secure your API endpoints and handle file uploads safely.
 
+---
+
+## References
 - [Qdrant Documentation](https://qdrant.tech/documentation/)
 - [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)
 - [Pillow (PIL)](https://pillow.readthedocs.io/en/stable/)
 
 ---
 
-For further questions or advanced integration, see the main project README or contact the project maintainer.
+For advanced integration, see `USER_MANUAL.md` or contact the project maintainer.
