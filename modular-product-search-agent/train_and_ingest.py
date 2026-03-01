@@ -1,45 +1,41 @@
-
-"""
-train_and_ingest.py
--------------------
-This script handles the offline phase: loading product data, encoding images/text, and populating the Qdrant vector database.
-Run this script whenever you want to (re)build your product search index.
-
-Steps:
-1. Load product data from CSV
-2. Encode images and text using CLIP (SigLIP)
-3. Store vectors and metadata in Qdrant (vector DB)
-4. Designed for batch/offline use (not for live queries)
-"""
-
-
-# --- Imports ---
 import os
 import io
 import warnings
+import logging
 import pandas as pd
 import numpy as np
 import torch
+import requests
 from PIL import Image
 from transformers import AutoProcessor, AutoModel
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
+from dotenv import load_dotenv
 
+# --- Load environment variables ---
+load_dotenv()
 
 # --- Configuration ---
-CLIP_MODEL_NAME = "google/siglip-base-patch16-224"  # Model name for CLIP/SigLIP
-VECTOR_DIM = 768  # Embedding dimension
-COLLECTION_NAME = "product_catalog"  # Qdrant collection name
-DATA_CSV_PATH = "../data/products.csv"  # Path to product CSV (edit as needed)
-SUPPORTED_IMAGE_FORMATS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}  # Allowed image types
+CLIP_MODEL_NAME = os.getenv("CLIP_MODEL_NAME", "google/siglip-base-patch16-224")
+VECTOR_DIM = int(os.getenv("VECTOR_DIM", 768))
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "product_catalog")
+DATA_CSV_PATH = os.getenv("DATA_CSV_PATH", "/content/products.csv")
+SUPPORTED_IMAGE_FORMATS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
+# Qdrant remote config (all loaded from .env or environment)
+# QDRANT_URL: The full URL to your Qdrant Cloud/cluster endpoint (e.g. https://xxxx.aws.cloud.qdrant.io:6333)
+# QDRANT_API_KEY: Your Qdrant API key (never hardcode in code, always use .env or environment)
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_HOST = os.getenv("QDRANT_HOST")  # Optional, for self-hosted Qdrant
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))  # Optional, for self-hosted Qdrant
+
+# --- Logging setup ---
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("train_and_ingest")
 
 # --- Data Ingestion Agent ---
 class DataIngestionAgent:
-    """
-    Loads, validates, and returns product data from a CSV file.
-    Ensures required columns are present and fills missing optional columns.
-    """
     REQUIRED_COLUMNS = {"product_id", "image_path", "name", "text_description"}
     OPTIONAL_DEFAULTS = {"category": "", "price": 0.0, "brand": ""}
 
@@ -47,22 +43,15 @@ class DataIngestionAgent:
         self.csv_path = csv_path
 
     def load(self) -> list[dict]:
-        """
-        Load and validate products from CSV.
-        Returns a list of product dictionaries.
-        """
         if not os.path.exists(self.csv_path):
             raise FileNotFoundError(f"CSV not found: {self.csv_path}")
         df = pd.read_csv(self.csv_path)
-        # Check for required columns
         missing = self.REQUIRED_COLUMNS - set(df.columns)
         if missing:
             raise ValueError(f"CSV missing required columns: {missing}")
-        # Fill missing optional columns with defaults
         for col, default in self.OPTIONAL_DEFAULTS.items():
             if col not in df.columns:
                 df[col] = default
-        # Drop rows with missing required fields
         before_count = len(df)
         df = df.dropna(subset=list(self.REQUIRED_COLUMNS))
         dropped = before_count - len(df)
@@ -72,13 +61,8 @@ class DataIngestionAgent:
         print(f"Loaded {len(products)} products from {self.csv_path}")
         return products
 
-
-# --- CLIP Encoder Agent (Local file mode) ---
+# --- CLIP Encoder Agent ---
 class CLIPEncoderAgent:
-    """
-    Encodes images and text into 768-dim vectors using SigLIP (CLIP).
-    Only supports local image file paths.
-    """
     def __init__(self, model_name: str = CLIP_MODEL_NAME):
         print(f"Loading model '{model_name}'...")
         self.processor = AutoProcessor.from_pretrained(model_name)
@@ -87,132 +71,79 @@ class CLIPEncoderAgent:
         print("Model loaded ✓")
 
     def _validate_image(self, image_path: str) -> Image.Image:
-        """
-        Validate and open an image from a local file path.
-        """
-        if not os.path.exists(image_path):
-            raise FileNotFoundError(f"Image not found: {image_path}")
-        ext = os.path.splitext(image_path)[1].lower()
-        if ext not in SUPPORTED_IMAGE_FORMATS:
-            raise ValueError(f"Unsupported image format '{ext}'. Supported: {SUPPORTED_IMAGE_FORMATS}")
-        try:
-            img = Image.open(image_path).convert("RGB")
-            img.verify()  # Check for corruption
-            img = Image.open(image_path).convert("RGB")  # Re-open after verify
-            return img
-        except Exception as e:
-            raise ValueError(f"Cannot read image '{image_path}': {e}")
+        if image_path.startswith("http://") or image_path.startswith("https://"):
+            try:
+                response = requests.get(image_path, stream=True)
+                response.raise_for_status()
+                img_data = io.BytesIO(response.content)
+                img = Image.open(img_data).convert("RGB")
+                return img
+            except Exception as e:
+                raise ValueError(f"Cannot download/read image from URL '{image_path}': {e}")
+        else:
+            if not os.path.exists(image_path):
+                raise FileNotFoundError(f"Image not found: {image_path}")
+            try:
+                img = Image.open(image_path).convert("RGB")
+                return img
+            except Exception as e:
+                raise ValueError(f"Cannot read image '{image_path}': {e}")
 
     def _l2_normalize(self, vector: np.ndarray) -> np.ndarray:
-        """
-        L2-normalize a vector for cosine similarity.
-        """
         norm = np.linalg.norm(vector)
-        if norm == 0:
-            return vector
-        return vector / norm
+        return vector / norm if norm > 0 else vector
 
     def encode_image(self, image_path: str) -> np.ndarray:
-        """
-        Encode an image (from local path) into a 768-dim L2-normalized vector.
-        """
         img = self._validate_image(image_path)
         with torch.no_grad():
             inputs = self.processor(images=img, return_tensors="pt")
-            image_features = self.model.get_image_features(**inputs)
-            vector = image_features.squeeze().numpy()
+            outputs = self.model.get_image_features(**inputs)
+            vector = outputs.pooler_output.squeeze().numpy()
         return self._l2_normalize(vector)
 
     def encode_text(self, text: str) -> np.ndarray:
-        """
-        Encode text into a 768-dim L2-normalized vector.
-        """
         if not text or not text.strip():
             raise ValueError("Cannot encode empty text")
         with torch.no_grad():
             inputs = self.processor(text=[text], return_tensors="pt", padding=True, truncation=True)
-            text_features = self.model.get_text_features(**inputs)
-            vector = text_features.squeeze().numpy()
+            outputs = self.model.get_text_features(**inputs)
+            vector = outputs.pooler_output.squeeze().numpy()
         return self._l2_normalize(vector)
-
 
 # --- Vector Store Agent ---
 class VectorStoreAgent:
-    """
-    Manages Qdrant vector database for storing product vectors and metadata.
-    """
     def __init__(self, collection_name: str = COLLECTION_NAME, vector_dim: int = VECTOR_DIM):
-        # Use persistent storage for Qdrant (not in-memory)
-        self.client = QdrantClient(path="../qdrant_data")
+        self.client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
         self.collection_name = collection_name
-        # Recreate collection (drops if exists)
-        self.client.recreate_collection(
-            collection_name=self.collection_name,
-            vectors_config=VectorParams(size=vector_dim, distance=Distance.COSINE),
-        )
-        print(f"Collection '{self.collection_name}' created (dim={vector_dim}, COSINE)")
+        if not self.client.collection_exists(collection_name):
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(size=vector_dim, distance=Distance.COSINE),
+            )
+            logger.info(f"Collection '{self.collection_name}' created")
 
     def upsert(self, point_id: int, vector: np.ndarray, payload: dict):
-        """
-        Insert or update a single product vector with metadata.
-        """
         self.client.upsert(
             collection_name=self.collection_name,
             points=[PointStruct(id=point_id, vector=vector.tolist(), payload=payload)],
         )
 
-
-# --- Main Ingestion Script ---
 if __name__ == "__main__":
-    # Initialize agents
-    ingestion_agent = DataIngestionAgent(csv_path=DATA_CSV_PATH)
-    clip_encoder = CLIPEncoderAgent(model_name=CLIP_MODEL_NAME)
-    vector_store = VectorStoreAgent(collection_name=COLLECTION_NAME, vector_dim=VECTOR_DIM)
-
-    # Load products from CSV
-    products = ingestion_agent.load()
-    for idx, product in enumerate(products):
-        product_id = product["product_id"]
-        image_path = product["image_path"]
-        text_desc = product["text_description"]
-        try:
-            image_vector = None
-            text_vector = None
-            # Encode image (if possible)
+    try:
+        ingestion_agent = DataIngestionAgent(csv_path=DATA_CSV_PATH)
+        clip_encoder = CLIPEncoderAgent(model_name=CLIP_MODEL_NAME)
+        vector_store = VectorStoreAgent(collection_name=COLLECTION_NAME, vector_dim=VECTOR_DIM)
+        products = ingestion_agent.load()
+        for idx, product in enumerate(products):
             try:
-                image_vector = clip_encoder.encode_image(image_path)
+                img_vec = clip_encoder.encode_image(product["image_path"])
+                txt_vec = clip_encoder.encode_text(product["text_description"])
+                # Fix: Use clip_encoder method instead of undefined 'self'
+                combined = clip_encoder._l2_normalize(np.mean([img_vec, txt_vec], axis=0))
+                payload = {**product, "price": float(product.get("price", 0.0))}
+                vector_store.upsert(point_id=idx, vector=combined, payload=payload)
+                logger.info(f"Processed {product['product_id']}")
             except Exception as e:
-                warnings.warn(f"[{product_id}] Image encode failed ({e}), using text-only")
-            # Encode text (if possible)
-            try:
-                text_vector = clip_encoder.encode_text(text_desc)
-            except Exception as e:
-                warnings.warn(f"[{product_id}] Text encode failed ({e}), using image-only")
-            # Combine vectors (average if both, else use available)
-            if image_vector is not None and text_vector is not None:
-                combined = np.mean([image_vector, text_vector], axis=0)
-                norm = np.linalg.norm(combined)
-                if norm > 0:
-                    combined = combined / norm
-            elif image_vector is not None:
-                combined = image_vector
-            elif text_vector is not None:
-                combined = text_vector
-            else:
-                raise ValueError("Both image and text encoding failed")
-            # Build payload (all product metadata)
-            payload = {
-                "product_id": product_id,
-                "name": product["name"],
-                "text_description": text_desc,
-                "image_path": image_path,
-                "category": product.get("category", ""),
-                "price": float(product.get("price", 0.0)),
-                "brand": product.get("brand", ""),
-            }
-            # Upsert to Qdrant
-            vector_store.upsert(point_id=idx, vector=combined, payload=payload)
-            print(f"  ({idx + 1}/{len(products)}) ✓ {product_id} — {product['name']}")
-        except Exception as e:
-            print(f"  ({idx + 1}/{len(products)}) ✗ {product_id} — FAILED: {e}")
-    print(f"Ingest complete: {len(products)} products processed.")
+                logger.error(f"Failed {product['product_id']}: {e}")
+    except Exception as e:
+        logger.critical(f"Fatal: {e}")
