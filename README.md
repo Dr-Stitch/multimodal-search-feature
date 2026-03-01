@@ -29,23 +29,23 @@ AI-Agents/
 
 ## Product Dataset Format (products.csv)
 
-| Column             | Required | Notes                                       |
-| ------------------ | -------- | ------------------------------------------- |
-| `product_id`       | Yes      | Unique identifier                           |
-| `image_path`       | Yes      | Relative path e.g. `data/images/SKU001.jpg` |
-| `name`             | Yes      | Display name                                |
-| `text_description` | Yes      | Human-written description                   |
-| `category`         | No       | Defaults to `""`                            |
-| `price`            | No       | Defaults to `0.0`                           |
-| `brand`            | No       | Defaults to `""`                            |
+| Column             | Required | Notes                                                                                      |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------ |
+| `product_id`       | Yes      | Unique identifier                                                                          |
+| `image_path`       | Yes      | Local path (e.g. `data/images/SKU001.jpg`) **or** URL (e.g. `https://example.com/img.jpg`) |
+| `name`             | Yes      | Display name                                                                               |
+| `text_description` | Yes      | Human-written description                                                                  |
+| `category`         | No       | Defaults to `""`                                                                           |
+| `price`            | No       | Defaults to `0.0`                                                                          |
+| `brand`            | No       | Defaults to `""`                                                                           |
 
 ## Required Packages
 
 ```
-transformers  torch  torchvision  qdrant-client  python-dotenv  pandas  Pillow
+transformers  torch  torchvision  qdrant-client  python-dotenv  pandas  Pillow  requests
 ```
 
-> `torch` + `transformers` load SigLIP locally. Everything runs fully offline — no API keys needed.
+> `torch` + `transformers` load SigLIP locally. `requests` is needed for the URL image mode. Everything runs fully offline — no API keys needed for encoding.
 
 ## .env Variables
 
@@ -70,13 +70,26 @@ None required for the current implementation. `.env` file and `python-dotenv` ar
 - Drops rows with missing required fields (with warning)
 - Returns `list[dict]`
 
-**Cell 6 — `CLIPEncoderAgent`**
+**Cell 6A — `CLIPEncoderAgent` (URL mode)**
 
+- **Use this cell when your CSV has image URLs** (http/https) in `image_path`
+- Downloads images from the internet into memory (no files saved to disk)
 - Loads `google/siglip-base-patch16-224` processor and model on construction (cached after first load)
-- `encode_image(image_path)` → validates file exists + Pillow-readable → returns 768-dim numpy vector
+- `encode_image(image_url)` → downloads image → returns 768-dim L2-normalized numpy vector
 - `encode_text(text)` → raises `ValueError` on empty string → returns 768-dim numpy vector
-- Both methods L2-normalize the output vector before returning (required for correct cosine similarity in Qdrant)
-- Supports `.jpg`, `.png`, `.webp`, `.gif`
+- Images are processed in memory only — not saved locally
+- **Trade-off:** Slower ingestion due to network downloads; requires internet connection
+
+**Cell 6B — `CLIPEncoderAgent` (Local file mode)**
+
+- **Use this cell when your CSV has local file paths** in `image_path`
+- Loads `google/siglip-base-patch16-224` processor and model on construction (cached after first load)
+- `encode_image(image_path)` → validates file exists + Pillow-readable → returns 768-dim L2-normalized numpy vector
+- `encode_text(text)` → raises `ValueError` on empty string → returns 768-dim numpy vector
+- Supports `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`
+- **Trade-off:** Faster ingestion (no network); images must be downloaded to disk first
+
+> **Toggle:** Run **only one** of Cell 6A or Cell 6B before proceeding. Both define the same `CLIPEncoderAgent` class — whichever you run last is the one used by the rest of the notebook.
 
 **Cell 7 — `VectorStoreAgent`**
 
@@ -182,7 +195,8 @@ ResponseAgent.display           formatted ranked output
 | ----------------------------- | -------------------- | --------------------------------------------------------------------- |
 | CSV not found                 | `DataIngestionAgent` | `FileNotFoundError`                                                   |
 | CSV missing required columns  | `DataIngestionAgent` | `ValueError` listing missing columns                                  |
-| Image file not found          | `CLIPEncoderAgent`   | `FileNotFoundError`; ingest loop catches, falls back to text-only     |
+| Image file not found (local)  | `CLIPEncoderAgent`   | `FileNotFoundError`; ingest loop catches, falls back to text-only     |
+| Image URL download failed     | `CLIPEncoderAgent`   | `ValueError` with HTTP error; ingest loop falls back to text-only     |
 | Corrupt image                 | `CLIPEncoderAgent`   | Pillow `verify()` raises; ingest loop falls back to text-only         |
 | Unsupported image format      | `CLIPEncoderAgent`   | `ValueError` listing supported formats (.jpg, .png, .webp, .gif)      |
 | Image encode failure (ingest) | Ingest loop          | Falls back to text-only vector                                        |
@@ -195,6 +209,7 @@ ResponseAgent.display           formatted ranked output
 - **Qdrant is in-memory only** — re-run ingest after every kernel restart. For persistence, change `":memory:"` to `QdrantClient(path="./qdrant_data")` (noted as comment in Cell 10)
 - **SigLIP model is downloaded once** and cached by HuggingFace in `~/.cache/huggingface/` (~400 MB). Subsequent runs load from cache instantly
 - **No rate limiting needed** — all encoding is local
+- **Two image modes** — Cell 6A (URL mode) for CSVs with image URLs, Cell 6B (Local mode) for CSVs with local file paths. Run only one before training
 - **Upgrading to a heavier CLIP model**: swap `CLIP_MODEL_NAME` to `laion/CLIP-ViT-H-14-laion2B` and set `VECTOR_DIM=1024` in Cell 4; requires GPU for reasonable speed
 - **Vector averaging for image+text queries** — averaging the image and text vectors then re-normalizing is the standard CLIP fusion approach; gives balanced image+text relevance
 
