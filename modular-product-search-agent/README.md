@@ -25,13 +25,13 @@ modular-product-search-agent/
     ```
 2. **Configure environment variables:**
     - Create a `.env` file in the project root with:
-      ```env
-      QDRANT_URL=https://your-qdrant-url:6333
-      QDRANT_API_KEY=your_api_key_here
-      CLIP_MODEL_NAME=google/siglip-base-patch16-224
-      QDRANT_COLLECTION=product_catalog
-      DATA_CSV_PATH=../data/products.csv
-      ```
+        ```env
+        QDRANT_URL=https://your-qdrant-url:6333
+        QDRANT_API_KEY=your_api_key_here
+        CLIP_MODEL_NAME=google/siglip-base-patch16-224
+        QDRANT_COLLECTION=product_catalog
+        DATA_CSV_PATH=../data/products.csv
+        ```
     - Never hardcode secrets in code. Always use `.env` or environment variables.
 
 ---
@@ -39,10 +39,12 @@ modular-product-search-agent/
 ## 1. train_and_ingest.py
 
 **Purpose:**
+
 - Loads product data, encodes images/text, and populates the Qdrant vector database.
 - Run this script whenever you want to (re)build your product search index.
 
 **Usage:**
+
 ```bash
 python train_and_ingest.py
 ```
@@ -52,13 +54,16 @@ python train_and_ingest.py
 ## 2. search_feature.py
 
 **Purpose:**
+
 - Loads the trained Qdrant vector DB and runs search queries (image, text, or both).
 - Integrate the `ProductSearchFeature` class into your backend (Flask, FastAPI, etc.).
 
 **Usage:**
+
 ```bash
 python search_feature.py
 ```
+
 Or import and use in your API server.
 
 ---
@@ -66,18 +71,22 @@ Or import and use in your API server.
 ## 3. search_api_fastapi.py
 
 **Purpose:**
+
 - FastAPI-based API for multimodal product search.
 - Accepts text, image, or both as input and returns ranked product results.
 
 **Usage:**
+
 ```bash
 uvicorn search_api_fastapi:app --host 0.0.0.0 --port 8000 --reload
 ```
+
 Then POST to `http://localhost:8000/search` with form fields `query_text`, `image`, and `top_k`.
 
 ---
 
 ## Security & Best Practices
+
 - Store all secrets (API keys, URLs) in `.env`.
 - Validate and sanitize all file uploads.
 - For production, secure your API endpoints and handle file uploads safely.
@@ -85,6 +94,7 @@ Then POST to `http://localhost:8000/search` with form fields `query_text`, `imag
 ---
 
 ## References
+
 - [Qdrant Documentation](https://qdrant.tech/documentation/)
 - [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)
 - [Pillow (PIL)](https://pillow.readthedocs.io/en/stable/)

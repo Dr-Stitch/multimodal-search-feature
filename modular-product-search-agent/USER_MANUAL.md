@@ -18,23 +18,20 @@ The modular product search agent enables users to search your product catalog us
 
 ---
 
-
 ## 2. Environment Setup
 
 1. **Install dependencies:**
-        ```bash
-        pip install -r requirements.txt
-        ```
-2. **Configure environment variables:**
-        - Create a `.env` file in the project root with:
-            ```env
-            QDRANT_URL=https://your-qdrant-url:6333
-            QDRANT_API_KEY=your_api_key_here
-            CLIP_MODEL_NAME=google/siglip-base-patch16-224
-            QDRANT_COLLECTION=product_catalog
-            DATA_CSV_PATH=../data/products.csv
-            ```
-        - Never hardcode secrets in code. Always use `.env` or environment variables.
+   `bash
+    pip install -r requirements.txt
+    `
+2. **Configure environment variables:** - Create a `.env` file in the project root with:
+   `env
+        QDRANT_URL=https://your-qdrant-url:6333
+        QDRANT_API_KEY=your_api_key_here
+        CLIP_MODEL_NAME=google/siglip-base-patch16-224
+        QDRANT_COLLECTION=product_catalog
+        DATA_CSV_PATH=../data/products.csv
+        ` - Never hardcode secrets in code. Always use `.env` or environment variables.
 
 ---
 
@@ -72,17 +69,17 @@ The modular product search agent enables users to search your product catalog us
 The project includes a ready-to-use FastAPI server (`search_api_fastapi.py`).
 
 **Start the API server:**
+
 ```bash
 uvicorn search_api_fastapi:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **API Endpoint:**
-- `POST /search` — Accepts form fields:
-        - `query_text` (optional, string)
-        - `image` (optional, file upload)
-        - `top_k` (optional, int)
+
+- `POST /search` — Accepts form fields: - `query_text` (optional, string) - `image` (optional, file upload) - `top_k` (optional, int)
 
 **Example cURL:**
+
 ```bash
 curl -X POST "http://localhost:8000/search" \
     -F "query_text=red running shoes" \
@@ -270,7 +267,6 @@ app.listen(3000, () => console.log("Server running on port 3000"));
 ## 5. Result Format
 
 The backend returns a list of results, each with:
-
 
 Example response:
 
